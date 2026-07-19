@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "reddit-telegram-assistant"
+version = "0.1.0"
+description = "Private Reddit-to-Telegram assistant for permalink-only post alerts and saved-item management."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [{ name = "Private project" }]
+dependencies = [
+    "praw>=7.8,<8",
+    "python-dotenv>=1.0,<2",
+    "python-telegram-bot[job-queue]>=21,<23",
+    "APScheduler>=3.10,<4",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0,<9",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["assistant"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

@@ -1,0 +1,4 @@
+# One keyword or phrase per line.
+# Blank lines and comment lines are ignored.
+
+example keyword

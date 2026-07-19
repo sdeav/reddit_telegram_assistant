@@ -1,0 +1,17 @@
+.env
+*.sqlite3
+*.sqlite3-*
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+dist/
+build/
+*.egg-info/
+.idea/
+.vscode/
+
+.DS_Store
+Thumbs.db
+
