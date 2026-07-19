@@ -44,8 +44,8 @@ async def run(*, check_once: bool = False, base_dir: Path | None = None) -> int:
 
     storage = Storage(
         config.database_path,
-        retention_hours=config.processed_id_retention_hours,
-        max_processed_ids=config.max_processed_ids,
+        retention_hours=config.seen_post_retention_hours,
+        max_seen_post_ids=config.max_seen_post_ids,
     )
     storage.connect()
     try:

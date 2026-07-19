@@ -24,8 +24,8 @@ def valid_env(tmp_path: Path) -> dict[str, str]:
         "REDDIT_NEW_POST_LIMIT": "25",
         "AUTO_SAVE_MATCHES": "false",
         "DATABASE_PATH": str(tmp_path / "state.sqlite3"),
-        "PROCESSED_ID_RETENTION_HOURS": "48",
-        "MAX_PROCESSED_IDS": "5000",
+        "SEEN_POST_RETENTION_HOURS": "48",
+        "MAX_SEEN_POST_IDS": "5000",
         "LOG_LEVEL": "INFO",
     }
 
@@ -38,6 +38,21 @@ def test_configuration_validation_accepts_expected_values(tmp_path: Path) -> Non
     assert config.telegram_allowed_user_id == 123
     assert config.telegram_allowed_chat_id == 456
     assert config.auto_save_matches is False
+    assert config.seen_post_retention_hours == 48
+    assert config.max_seen_post_ids == 5000
+
+
+def test_configuration_accepts_legacy_seen_post_retention_names(tmp_path: Path) -> None:
+    env = valid_env(tmp_path)
+    env.pop("SEEN_POST_RETENTION_HOURS")
+    env.pop("MAX_SEEN_POST_IDS")
+    env["PROCESSED_ID_RETENTION_HOURS"] = "24"
+    env["MAX_PROCESSED_IDS"] = "250"
+
+    config = AppConfig.from_env(env, base_dir=tmp_path)
+
+    assert config.seen_post_retention_hours == 24
+    assert config.max_seen_post_ids == 250
 
 
 def test_configuration_validation_reports_missing_required_settings(tmp_path: Path) -> None:

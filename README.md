@@ -15,7 +15,7 @@ The application runs continuously with Telegram long polling. A scheduled monito
 - List saved Reddit posts and comments with pagination.
 - List recent comments from the authenticated Reddit account, with optional search over the fetched comments.
 - Verify the authenticated Reddit username before starting monitoring or Telegram commands.
-- Store only operational state in SQLite.
+- Store only duplicate-prevention state in SQLite.
 
 ## Project Structure
 
@@ -134,8 +134,8 @@ CHECK_INTERVAL_MINUTES=15
 REDDIT_NEW_POST_LIMIT=25
 AUTO_SAVE_MATCHES=false
 DATABASE_PATH=reddit_telegram_assistant.sqlite3
-PROCESSED_ID_RETENTION_HOURS=48
-MAX_PROCESSED_IDS=5000
+SEEN_POST_RETENTION_HOURS=48
+MAX_SEEN_POST_IDS=5000
 LOG_LEVEL=INFO
 ```
 
@@ -198,13 +198,10 @@ No other Reddit OAuth scopes are requested.
 
 ## Data Stored Locally
 
-SQLite is used only for operational state:
+SQLite is used only for duplicate prevention. It stores:
 
-- Processed post ID.
-- Processing timestamp.
-- Notification status.
-- Last successful check timestamp.
-- Temporary callback or pagination state, if needed.
+- Reddit post ID.
+- UTC time when processing was successfully completed.
 
 The application does not store:
 
@@ -214,13 +211,16 @@ The application does not store:
 - Comment bodies.
 - Telegram message text.
 - Matched keywords.
+- Saved-item content.
 - Reddit tokens.
 - Telegram tokens.
 - User profiles.
 
 ## Retention Policy
 
-Processed post IDs expire after 48 hours by default. Cleanup runs automatically during monitor checks. The maximum number of processed IDs is also capped by `MAX_PROCESSED_IDS`.
+Seen-post records expire after 48 hours by default. Cleanup runs automatically during monitor checks. The maximum number of seen post IDs is also capped by `MAX_SEEN_POST_IDS`.
+
+The legacy names `PROCESSED_ID_RETENTION_HOURS` and `MAX_PROCESSED_IDS` are still accepted for existing local `.env` files.
 
 ## Privacy Protections
 
@@ -237,6 +237,8 @@ Processed post IDs expire after 48 hours by default. Cleanup runs automatically 
 ## Rate Limits and Failures
 
 The monitor retrieves only a small number of newest posts per subreddit. It prevents overlapping checks, continues with other subreddits when one fails, and uses bounded exponential backoff for temporary Reddit failures such as rate limits and network errors.
+
+If a matching post cannot be delivered to Telegram, it is not marked seen. A later monitoring check can retry the same notification. If optional auto-save fails after a Telegram notification succeeds, the post is still marked seen and the save failure is logged safely.
 
 Authentication and configuration failures are not retried endlessly.
 

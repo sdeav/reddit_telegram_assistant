@@ -29,8 +29,8 @@ class AppConfig:
     reddit_new_post_limit: int
     auto_save_matches: bool
     database_path: Path
-    processed_id_retention_hours: int
-    max_processed_ids: int
+    seen_post_retention_hours: int
+    max_seen_post_ids: int
     log_level: str
     keywords_path: Path
 
@@ -83,14 +83,20 @@ class AppConfig:
             environ.get("REDDIT_NEW_POST_LIMIT", "25"),
             "REDDIT_NEW_POST_LIMIT",
         )
-        retention_hours = parse_positive_int(
-            environ.get("PROCESSED_ID_RETENTION_HOURS", "48"),
+        retention_value, retention_name = get_env_with_legacy_name(
+            environ,
+            "SEEN_POST_RETENTION_HOURS",
             "PROCESSED_ID_RETENTION_HOURS",
+            "48",
         )
-        max_processed_ids = parse_positive_int(
-            environ.get("MAX_PROCESSED_IDS", "5000"),
+        retention_hours = parse_positive_int(retention_value, retention_name)
+        max_seen_value, max_seen_name = get_env_with_legacy_name(
+            environ,
+            "MAX_SEEN_POST_IDS",
             "MAX_PROCESSED_IDS",
+            "5000",
         )
+        max_seen_post_ids = parse_positive_int(max_seen_value, max_seen_name)
         user_id = parse_int(environ["TELEGRAM_ALLOWED_USER_ID"], "TELEGRAM_ALLOWED_USER_ID")
         chat_id = parse_int(environ["TELEGRAM_ALLOWED_CHAT_ID"], "TELEGRAM_ALLOWED_CHAT_ID")
 
@@ -119,8 +125,8 @@ class AppConfig:
             reddit_new_post_limit=new_post_limit,
             auto_save_matches=parse_bool(environ.get("AUTO_SAVE_MATCHES", "false")),
             database_path=database_path,
-            processed_id_retention_hours=retention_hours,
-            max_processed_ids=max_processed_ids,
+            seen_post_retention_hours=retention_hours,
+            max_seen_post_ids=max_seen_post_ids,
             log_level=log_level,
             keywords_path=base / "config" / "keywords.txt",
         )
@@ -128,6 +134,14 @@ class AppConfig:
     @property
     def configured_oauth_scopes(self) -> tuple[str, ...]:
         return REQUIRED_REDDIT_SCOPES
+
+    @property
+    def processed_id_retention_hours(self) -> int:
+        return self.seen_post_retention_hours
+
+    @property
+    def max_processed_ids(self) -> int:
+        return self.max_seen_post_ids
 
 
 @dataclass(frozen=True)
@@ -203,6 +217,19 @@ def parse_positive_int(value: str, name: str) -> int:
     if parsed <= 0:
         raise ConfigError(f"{name} must be greater than zero")
     return parsed
+
+
+def get_env_with_legacy_name(
+    environ: Mapping[str, str],
+    name: str,
+    legacy_name: str,
+    default: str,
+) -> tuple[str, str]:
+    if _clean(environ.get(name)):
+        return environ[name], name
+    if _clean(environ.get(legacy_name)):
+        return environ[legacy_name], legacy_name
+    return default, name
 
 
 def normalize_reddit_username(username: str) -> str:

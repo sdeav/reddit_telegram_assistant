@@ -29,8 +29,8 @@ def make_config(tmp_path: Path) -> AppConfig:
         reddit_new_post_limit=25,
         auto_save_matches=False,
         database_path=tmp_path / "state.sqlite3",
-        processed_id_retention_hours=48,
-        max_processed_ids=5000,
+        seen_post_retention_hours=48,
+        max_seen_post_ids=5000,
         log_level="INFO",
         keywords_path=tmp_path / "keywords.txt",
     )

@@ -66,6 +66,7 @@ class RedditMonitor:
         self._max_retries = max_retries
         self._lock = asyncio.Lock()
         self._last_result = "not run yet"
+        self._last_successful_check_utc: datetime | None = None
 
     async def run_check(self) -> CheckResult:
         if self._lock.locked():
@@ -90,7 +91,7 @@ class RedditMonitor:
         return MonitorRuntimeStatus(
             is_running=self._lock.locked(),
             last_result=self._last_result,
-            last_successful_check_utc=self.storage.get_last_successful_check(),
+            last_successful_check_utc=self._last_successful_check_utc,
         )
 
     async def _run_check_locked(self) -> CheckResult:
@@ -103,7 +104,7 @@ class RedditMonitor:
         auto_saved = 0
         subreddits_checked = 0
 
-        self.storage.cleanup_processed()
+        self.storage.cleanup_seen()
 
         for subreddit in self.config.subreddits:
             try:
@@ -121,42 +122,39 @@ class RedditMonitor:
                 continue
 
             for post in posts:
-                if self.storage.has_processed(post.id):
+                if self.storage.has_seen(post.id):
                     continue
 
                 posts_inspected += 1
                 if self.matcher.matches(post.title, post.selftext):
                     matches_found += 1
-                    status = "matched"
                     if self.notifier is not None:
                         try:
                             await self.notifier.send_match_alert(post)
                             notifications_sent += 1
-                            status = "notified"
                             logger.info("Telegram notification sent post_id=%s", post.id)
                         except Exception as exc:
-                            status = "notification_failed"
                             detail = safe_error_detail(exc)
                             logger.warning("Telegram notification failed detail=%s", detail)
                             errors.append(f"telegram:{detail}")
+                            continue
+
+                    self.storage.mark_seen(post.id)
 
                     if self.config.auto_save_matches:
                         try:
                             self.reddit_client.save_submission_by_id(post.id)
                             auto_saved += 1
-                            status = f"{status}:auto_saved"
                             logger.info("Matched Reddit post saved post_id=%s", post.id)
                         except Exception as exc:
                             detail = safe_error_detail(exc)
                             logger.warning("Matched Reddit post save failed detail=%s", detail)
-                            errors.append(f"save:{detail}")
-                    self.storage.mark_processed(post.id, status)
                 else:
-                    self.storage.mark_processed(post.id, "no_match")
+                    self.storage.mark_seen(post.id)
 
         completed = utc_now()
         if not errors:
-            self.storage.set_last_successful_check(completed)
+            self._last_successful_check_utc = completed
         self._last_result = (
             f"checked={subreddits_checked} inspected={posts_inspected} "
             f"matches={matches_found} errors={len(errors)}"

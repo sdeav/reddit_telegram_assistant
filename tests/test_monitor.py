@@ -28,22 +28,23 @@ def make_config(tmp_path: Path, *, auto_save_matches: bool = False) -> AppConfig
         reddit_new_post_limit=25,
         auto_save_matches=auto_save_matches,
         database_path=tmp_path / "state.sqlite3",
-        processed_id_retention_hours=48,
-        max_processed_ids=5000,
+        seen_post_retention_hours=48,
+        max_seen_post_ids=5000,
         log_level="INFO",
         keywords_path=tmp_path / "keywords.txt",
     )
 
 
 def make_storage(tmp_path: Path) -> Storage:
-    storage = Storage(tmp_path / "state.sqlite3", retention_hours=48, max_processed_ids=5000)
+    storage = Storage(tmp_path / "state.sqlite3", retention_hours=48, max_seen_post_ids=5000)
     storage.connect()
     return storage
 
 
 class FakeReddit:
-    def __init__(self, posts: list[RedditPost]) -> None:
+    def __init__(self, posts: list[RedditPost], *, fail_save: bool = False) -> None:
         self.posts = posts
+        self.fail_save = fail_save
         self.fetch_calls = 0
         self.saved_ids: list[str] = []
 
@@ -52,6 +53,8 @@ class FakeReddit:
         return self.posts[:limit]
 
     def save_submission_by_id(self, post_id: str) -> None:
+        if self.fail_save:
+            raise RuntimeError("Sensitive save detail should not be logged")
         self.saved_ids.append(post_id)
 
 
@@ -76,18 +79,153 @@ class BlockingReddit(FakeReddit):
 
 
 class FakeNotifier:
-    def __init__(self, *, fail: bool = False) -> None:
-        self.fail = fail
+    def __init__(self, *, failures_before_success: int = 0) -> None:
+        self.failures_before_success = failures_before_success
         self.sent: list[RedditPost] = []
 
     async def send_match_alert(self, post: RedditPost) -> None:
-        if self.fail:
+        if self.failures_before_success:
+            self.failures_before_success -= 1
             raise RuntimeError("Sensitive post body should not be logged")
         self.sent.append(post)
 
 
 async def noop_sleep(delay: float) -> None:
     return None
+
+
+def test_non_matching_post_is_marked_seen(tmp_path: Path) -> None:
+    post = RedditPost(
+        id="p1",
+        subreddit="islam",
+        permalink="https://www.reddit.com/r/islam/comments/p1/example/",
+        title="general discussion",
+        selftext="",
+    )
+    storage = make_storage(tmp_path)
+    monitor = RedditMonitor(
+        config=make_config(tmp_path),
+        reddit_client=FakeReddit([post]),
+        matcher=KeywordMatcher.from_keywords(["zakat"]),
+        storage=storage,
+        notifier=FakeNotifier(),
+        sleep=noop_sleep,
+    )
+
+    result = asyncio.run(monitor.run_check())
+
+    assert result.matches_found == 0
+    assert storage.has_seen("p1")
+
+
+def test_matching_post_is_marked_seen_after_telegram_success(tmp_path: Path) -> None:
+    post = RedditPost(
+        id="p1",
+        subreddit="islam",
+        permalink="https://www.reddit.com/r/islam/comments/p1/example/",
+        title="zakat question",
+        selftext="",
+    )
+    storage = make_storage(tmp_path)
+    notifier = FakeNotifier()
+    monitor = RedditMonitor(
+        config=make_config(tmp_path),
+        reddit_client=FakeReddit([post]),
+        matcher=KeywordMatcher.from_keywords(["zakat"]),
+        storage=storage,
+        notifier=notifier,
+        sleep=noop_sleep,
+    )
+
+    result = asyncio.run(monitor.run_check())
+
+    assert result.notifications_sent == 1
+    assert len(notifier.sent) == 1
+    assert storage.has_seen("p1")
+
+
+def test_matching_post_is_not_marked_seen_when_telegram_fails(tmp_path: Path) -> None:
+    post = RedditPost(
+        id="p1",
+        subreddit="islam",
+        permalink="https://www.reddit.com/r/islam/comments/p1/example/",
+        title="zakat question",
+        selftext="",
+    )
+    storage = make_storage(tmp_path)
+    monitor = RedditMonitor(
+        config=make_config(tmp_path),
+        reddit_client=FakeReddit([post]),
+        matcher=KeywordMatcher.from_keywords(["zakat"]),
+        storage=storage,
+        notifier=FakeNotifier(failures_before_success=1),
+        sleep=noop_sleep,
+    )
+
+    result = asyncio.run(monitor.run_check())
+
+    assert result.notifications_sent == 0
+    assert result.errors
+    assert not storage.has_seen("p1")
+
+
+def test_failed_telegram_notification_is_retried_and_success_marks_seen(tmp_path: Path) -> None:
+    post = RedditPost(
+        id="p1",
+        subreddit="islam",
+        permalink="https://www.reddit.com/r/islam/comments/p1/example/",
+        title="zakat question",
+        selftext="",
+    )
+    storage = make_storage(tmp_path)
+    notifier = FakeNotifier(failures_before_success=1)
+    monitor = RedditMonitor(
+        config=make_config(tmp_path),
+        reddit_client=FakeReddit([post]),
+        matcher=KeywordMatcher.from_keywords(["zakat"]),
+        storage=storage,
+        notifier=notifier,
+        sleep=noop_sleep,
+    )
+
+    first = asyncio.run(monitor.run_check())
+    assert first.notifications_sent == 0
+    assert not storage.has_seen("p1")
+
+    second = asyncio.run(monitor.run_check())
+
+    assert second.notifications_sent == 1
+    assert len(notifier.sent) == 1
+    assert storage.has_seen("p1")
+
+
+def test_auto_save_failure_does_not_prevent_notification_or_cause_duplicates(tmp_path: Path) -> None:
+    post = RedditPost(
+        id="p1",
+        subreddit="islam",
+        permalink="https://www.reddit.com/r/islam/comments/p1/example/",
+        title="zakat question",
+        selftext="",
+    )
+    storage = make_storage(tmp_path)
+    notifier = FakeNotifier()
+    monitor = RedditMonitor(
+        config=make_config(tmp_path, auto_save_matches=True),
+        reddit_client=FakeReddit([post], fail_save=True),
+        matcher=KeywordMatcher.from_keywords(["zakat"]),
+        storage=storage,
+        notifier=notifier,
+        sleep=noop_sleep,
+    )
+
+    first = asyncio.run(monitor.run_check())
+    second = asyncio.run(monitor.run_check())
+
+    assert first.notifications_sent == 1
+    assert first.auto_saved == 0
+    assert second.notifications_sent == 0
+    assert len(notifier.sent) == 1
+    assert storage.has_seen("p1")
 
 
 def test_duplicate_notifications_are_prevented(tmp_path: Path) -> None:
@@ -193,7 +331,7 @@ def test_telegram_delivery_errors_are_safe_and_recorded(tmp_path: Path, caplog) 
         reddit_client=FakeReddit([post]),
         matcher=KeywordMatcher.from_keywords(["Secret"]),
         storage=make_storage(tmp_path),
-        notifier=FakeNotifier(fail=True),
+        notifier=FakeNotifier(failures_before_success=1),
         sleep=noop_sleep,
     )
 
